@@ -1,240 +1,191 @@
 (function () {
     'use strict';
 
-    // Запускаем логику кастомизации дизайна
-    function initTilesDesign() {
+    function initGpbxTiles() {
         if (!window.Lampa) return;
 
-        // 1. Регистрируем HTML-шаблон для красивой карточки-плитки серии
-        Lampa.Template.add('custom_design_episode', `
-            <div class="gpbx-episode-card selector">
-                <div class="gpbx-episode-card__preview">
-                    <img src="{img}" class="gpbx-episode-card__img" />
-                    <div class="gpbx-episode-card__duration">{duration}</div>
-                </div>
-                <div class="gpbx-episode-card__meta">
-                    <div class="gpbx-episode-card__hdr-tags">{tags}</div>
-                    <h4 class="gpbx-episode-card__title">{title}</h4>
-                    <p class="gpbx-episode-card__description">{description}</p>
-                </div>
-            </div>
-        `);
+        // Внедряем CSS стили для горизонтального скролла и плиток
+        injectStyles();
 
-        // 2. Внедряем CSS стили в документ для сборки горизонтальной сетки
-        injectCustomCSS();
-
-        // 3. Перехватываем стандартное событие создания активности серий в Lampa
-        Lampa.Listener.follow('activity', function (e) {
-            // Если Лампа открывает стандартный компонент со списком эпизодов
-            if (e.type === 'ready' && (e.component === 'episodes' || e.name === 'episodes')) {
-                transformListToTiles(e.object);
-            }
-        });
-    }
-
-    // Функция трансформации стандартного списка в горизонтальные плитки
-    function transformListToTiles(activityObject) {
-        var page = activityObject.page;
-        var card = activityObject.card || {};
-        
-        // Находим стандартный контейнер, куда Лампа складывает строки серий
-        var listContainer = page.find('.episodes__list, .activity__scroll, .browse__items');
-        if (!listContainer.length) return;
-
-        // Перестраиваем структуру контейнера под горизонтальный Flexbox
-        listContainer.addClass('gpbx-episodes-list');
-
-        // Получаем ID сериала и номер сезона для запроса красивых превью из TMDB
-        var tmdbId = card.id;
-        var seasonNum = activityObject.season || 1; 
-
-        // Делаем быстрый бесплатный запрос к TMDB, чтобы забрать картинки (кадры) и синопсисы серий
-        $.ajax({
-            url: `https://themoviedb.org{tmdbId}/season/${seasonNum}?api_key=3fd2be6f0c70a2a598f084ddfb75487c&language=ru-RU`,
-            dataType: 'json',
-            success: function (tmdbData) {
-                if (tmdbData && tmdbData.episodes) {
-                    applyTilesData(listContainer, tmdbData.episodes, seasonNum);
-                }
-            },
-            error: function () {
-                // Если TMDB недоступен, оставляем дефолтные заглушки, но сетку не ломаем
-                applyTilesData(listContainer, [], seasonNum);
-            }
-        });
-    }
-
-    // Замена элементов списка на плитки
-    function applyTilesData(container, tmdbEpisodes, seasonNum) {
-        // Находим все стандартные элементы серий, которые Лампа уже успела отрисовать
-        var standardItems = container.find('.episodes__item, .selector');
-
-        standardItems.each(function (index, element) {
-            var item = $(element);
-            var epNum = index + 1; // Порядковый номер серии
-
-            // Ищем соответствующие метаданные в массиве из TMDB
-            var meta = tmdbEpisodes.find(e => e.episode_number === epNum) || {};
-
-            // Формируем ссылки на картинку и текст
-            var imgUrl = meta.still_path ? `https://tmdb.org{meta.still_path}` : 'https://lampa.mx';
-            var duration = meta.runtime ? `${meta.runtime} мин.` : '—';
-            var description = meta.overview || 'Описание серии недоступно.';
-            var title = item.find('.episodes__title').text() || meta.name || `${epNum} серия`;
-
-            // Сохраняем оригинальные обработчики клика (чтобы ваши плагины просмотра продолжали работать!)
-            var originalClick = item.data('events') ? item.data('events').click : null;
-
-            // Генерируем бутафорские плашки качества (как на фото) для красоты интерфейса
-            var tagsHtml = `<span class="grid-tag tag-hdr">HDR 10+</span><span class="grid-tag tag-codec">H.265</span>`;
-
-            // Создаем новую плитку по нашему зарегистрированному шаблону
-            var newTile = Lampa.Template.get('custom_design_episode', {
-                img: imgUrl,
-                duration: duration,
-                season: seasonNum,
-                episode: epNum,
-                title: title,
-                description: description,
-                tags: tagsHtml
+        // Запускаем постоянный фоновый таймер проверки интерфейса (каждые 400мс)
+        // Это гарантирует, что дизайн применится на любом устройстве и плеере
+        setInterval(function() {
+            // Ищем стандартные строки серий gpbx (обычно они имеют класс .anime-factor, .online-season__episode или просто строки внутри окон)
+            var items = $('.online-season__episode, .episodes__item, .full-start__buttons ~ div .selector').filter(function() {
+                // Выбираем только те элементы, которые содержат текст серии и еще НЕ были обработаны
+                return ($(this).text().indexOf('серия') > -1 || $(this).text().match(/\d+\s+сер/i)) && !$(this).hasClass('gpbx-episode-card');
             });
 
-            // Копируем навигационные классы Lampa на новую плитку
-            newTile.attr('class', item.attr('class'));
-            newTile.addClass('gpbx-episode-card'); // Добавляем наши CSS-стили
+            if (items.length > 0) {
+                // Находим их общий контейнер и превращаем его в горизонтальный флекс
+                var container = items.parent();
+                if (!container.hasClass('gpbx-episodes-list')) {
+                    container.addClass('gpbx-episodes-list');
+                }
 
-            // Переносим действие клика со старой строки на новую плитку
-            newTile.on('hover:enter click', function (e) {
+                transformElementsToTiles(items);
+            }
+        }, 400);
+    }
+
+    function transformElementsToTiles(items) {
+        items.each(function (index, element) {
+            var item = $(element);
+            var epNum = index + 1;
+            
+            // Вытаскиваем название серии и информацию из оригинальной строки
+            var title = item.text().trim() || `${epNum} серия`;
+            var duration = item.find('.plugins__episode-duration, .duration').text() || '—';
+
+            // Генерируем бутафорские плашки качества (как на вашем фото)
+            var tagsHtml = `<span class="grid-tag tag-hdr">HDR 10+</span><span class="grid-tag tag-codec">H.265</span>`;
+            
+            // Заглушка для превью-картинки (берем заглушку Лампы)
+            var defaultImg = 'https://lampa.mx';
+
+            // Собираем HTML код новой плитки в точности как на фотографии
+            var newTile = $(`
+                <div class="gpbx-episode-card selector">
+                    <div class="gpbx-episode-card__preview">
+                        <img src="${defaultImg}" class="gpbx-episode-card__img" />
+                        <div class="gpbx-episode-card__duration">${duration}</div>
+                    </div>
+                    <div class="gpbx-episode-card__meta">
+                        <div class="gpbx-episode-card__hdr-tags">${tagsHtml}</div>
+                        <h4 class="gpbx-episode-card__title">${title}</h4>
+                        <p class="gpbx-episode-card__description">Нажмите для запуска онлайн-просмотра этой серии.</p>
+                    </div>
+                </div>
+            `);
+
+            // Переносим все оригинальные классы навигации (чтобы работал пульт)
+            newTile.attr('class', item.attr('class'));
+            newTile.addClass('gpbx-episode-card');
+
+            // Привязываем оригинальные события клика/нажатия пульта
+            newTile.on('hover:enter click', function () {
                 item.trigger('hover:enter');
                 item.click();
             });
 
-            // Заменяем старый скучный элемент списка на новую красивую плитку
+            // Заменяем старую вертикальную строку на нашу горизонтальную плитку
             item.replaceWith(newTile);
         });
 
-        // Насильно заставляем контроллер Лампы обновить фокус пульта на новых элементах
+        // Обновляем навигационную сетку Лампы для пульта
         if (window.Lampa.Controller) {
             window.Lampa.Controller.refresh();
         }
     }
 
-    // CSS стили для полной кастомизации (в точности как на фотографии)
-    function injectCustomCSS() {
+    function injectStyles() {
         var css = `
-            /* Превращаем вертикальный список серий в горизонтальный ряд */
+            /* Делаем блок серий горизонтальной лентой */
             .gpbx-episodes-list {
                 display: flex !important;
                 flex-direction: row !important;
                 overflow-x: auto !important;
                 gap: 20px !important;
                 padding: 15px 20px !important;
-                scroll-behavior: smooth;
                 white-space: nowrap !important;
+                clear: both !important;
             }
             .gpbx-episodes-list::-webkit-scrollbar {
-                display: none; /* Скрываем полосу прокрутки браузера */
+                display: none !important; /* Убираем полосу прокрутки */
             }
             
-            /* Стилизация контейнера плитки */
+            /* Стилизация карточки-плитки под фото */
             .gpbx-episode-card {
                 display: flex !important;
                 flex-direction: column !important;
-                width: 320px !important;
-                height: auto !important;
-                flex-shrink: 0;
-                background: rgba(255, 255, 255, 0.03) !important;
-                border-radius: 12px !important;
+                width: 310px !important;
+                height: 270px !important;
+                flex-shrink: 0 !important;
+                background: rgba(255, 255, 255, 0.04) !important;
+                border-radius: 10px !important;
                 border: 2px solid transparent !important;
-                overflow: hidden;
-                box-sizing: border-box;
+                overflow: hidden !important;
+                box-sizing: border-box !important;
                 padding: 0 !important;
                 margin: 0 !important;
                 text-align: left !important;
             }
             
-            /* Превью-картинка серии */
             .gpbx-episode-card__preview {
-                position: relative;
-                width: 100%;
-                height: 165px;
-                background: #141414;
+                position: relative !important;
+                width: 100% !important;
+                height: 155px !important;
+                background: #181818 !important;
             }
             .gpbx-episode-card__img {
-                width: 100%;
-                height: 100%;
-                object-fit: cover;
+                width: 100% !important;
+                height: 100% !important;
+                object-fit: cover !important;
             }
             .gpbx-episode-card__duration {
-                position: absolute;
-                bottom: 8px;
-                right: 8px;
-                background: rgba(0,0,0,0.75);
-                padding: 2px 6px;
-                border-radius: 4px;
-                font-size: 11px;
-                color: #fff;
+                position: absolute !important;
+                bottom: 8px !important;
+                right: 8px !important;
+                background: rgba(0,0,0,0.8) !important;
+                padding: 2px 6px !important;
+                border-radius: 4px !important;
+                font-size: 11px !important;
+                color: #fff !important;
             }
             
-            /* Текстовый блок под картинкой */
             .gpbx-episode-card__meta {
-                padding: 12px;
-                box-sizing: border-box;
+                padding: 12px !important;
                 white-space: normal !important;
             }
             .gpbx-episode-card__hdr-tags {
-                display: flex;
-                gap: 6px;
-                margin-bottom: 6px;
+                display: flex !important;
+                gap: 6px !important;
+                margin-bottom: 6px !important;
             }
             
-            /* Цветные теги качества */
+            /* Плашки HDR и кодека */
             .grid-tag {
-                font-size: 10px;
-                font-weight: bold;
-                padding: 1px 5px;
-                border-radius: 3px;
-                text-transform: uppercase;
+                font-size: 10px !important;
+                font-weight: bold !important;
+                padding: 1px 5px !important;
+                border-radius: 3px !important;
+                text-transform: uppercase !important;
             }
-            .tag-hdr { background: #ff9800; color: #000; }
-            .tag-codec { background: #2196f3; color: #fff; }
+            .tag-hdr { background: #ff9800 !important; color: #000 !important; }
+            .tag-codec { background: #2196f3 !important; color: #fff !important; }
             
-            /* Заголовок названия серии */
             .gpbx-episode-card__title {
-                font-size: 15px;
-                font-weight: bold;
-                color: #fff;
-                margin: 0 0 6px 0;
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
+                font-size: 15px !important;
+                font-weight: bold !important;
+                color: #fff !important;
+                margin: 0 0 4px 0 !important;
+                overflow: hidden !important;
+                text-overflow: ellipsis !important;
+                white-space: nowrap !important;
             }
-            
-            /* Описание серии на 3 строки */
             .gpbx-episode-card__description {
-                font-size: 12px;
-                color: #b3b3b3;
-                margin: 0;
-                display: -webkit-box;
-                -webkit-line-clamp: 3;
-                -webkit-box-orient: vertical;
-                overflow: hidden;
-                line-height: 1.4;
-                height: 50px;
+                font-size: 12px !important;
+                color: #a0a0a0 !important;
+                margin: 0 !important;
+                display: -webkit-box !important;
+                -webkit-line-clamp: 2 !important;
+                -webkit-box-orient: vertical !important;
+                overflow: hidden !important;
+                line-height: 1.4 !important;
             }
             
-            /* Стиль фокуса при выборе пульта ДУ */
+            /* Эффект выделения рамки пультом */
             .gpbx-episode-card.focus {
                 background: rgba(255, 255, 255, 0.12) !important;
                 border-color: #ffffff !important;
-                transform: scale(1.04);
-                box-shadow: 0 10px 25px rgba(0,0,0,0.6);
+                transform: scale(1.02) !important;
             }
         `;
-        $('head').append('<style>' + css + '</style>');
+        if (!$('head style:contains("gpbx-episodes-list")').length) {
+            $('head').append('<style>' + css + '</style>');
+        }
     }
 
-    // Ожидание полной инициализации системы Lampa
-    if (window.Lampa) initTilesDesign();
-    else Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') initTilesDesign(); });
+    if (window.Lampa) initGpbxTiles();
+    else Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') initGpbxTiles(); });
 })();
