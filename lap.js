@@ -1,196 +1,183 @@
 (function () {
     'use strict';
 
-    function initMobileGpbxTiles() {
-        if (!window.Lampa) return;
+    function initMobileSelectOverride() {
+        if (!window.Lampa || !window.Lampa.Select) return;
 
-        // Внедряем CSS стили, адаптированные под экраны смартфонов
-        injectMobileCSS();
+        // Подключаем адаптивные мобильные стили для плиток
+        injectMobileSelectCSS();
 
-        // Фоновый таймер: проверяет DOM каждые 300мс на наличие мобильных строк серий
-        setInterval(function() {
-            // Ищем любые элементы серий от gpbx или стандартной Лампы на телефоне
-            // В мобильной версии классы могут быть .online-season__episode, .episodes__item или просто .selector
-            var mobileItems = $('.online-season__episode, .episodes__item, .plugins__episode, .full-start__buttons ~ div .selector').filter(function() {
-                var text = $(this).text().toLowerCase();
-                var isEpisode = text.indexOf('серия') > -1 || text.indexOf('эпизод') > -1 || text.match(/\d+\s+сер/i);
-                return isEpisode && !$(this).hasClass('mobile-tile-card');
+        // Делаем копию оригинальной функции Лампы, чтобы не сломать её для обычных меню
+        var originalSelectShow = window.Lampa.Select.show;
+
+        // Переопределяем функцию вывода списков
+        window.Lampa.Select.show = function (object) {
+            // Проверяем, содержит ли открываемое окно список серий сериала
+            var isEpisodeList = object && object.items && object.items.some(function(item) {
+                var title = (item.title || '').toLowerCase();
+                return title.indexOf('серия') > -1 || title.indexOf('эпизод') > -1 || title.match(/\d+\s+сер/i);
             });
 
-            if (mobileItems.length > 0) {
-                var container = mobileItems.parent();
-                
-                // Превращаем контейнер в мобильную скролл-ленту
-                if (!container.hasClass('mobile-tiles-container')) {
-                    container.addClass('mobile-tiles-container');
-                }
+            // Если это список серий, перестраиваем его дизайн в горизонтальные плитки
+            if (isEpisodeList && object.items) {
+                // Модифицируем заголовки и структуру каждого элемента перед отправкой на экран
+                object.items.forEach(function(item, index) {
+                    var epNum = index + 1;
+                    var origTitle = item.title || `${epNum} серия`;
+                    var duration = item.subtitle || '— мин.';
 
-                buildMobileTiles(mobileItems);
+                    // Подменяем текст элемента на кастомный HTML-каркас плитки, как на фото
+                    item.title = `
+                        <div class="m-select-tile">
+                            <div class="m-select-tile__preview">
+                                <img src="https://lampa.mx" class="m-select-tile__img" />
+                                <div class="m-select-tile__duration">${duration}</div>
+                            </div>
+                            <div class="m-select-tile__meta">
+                                <div class="m-select-tile__tags">
+                                    <span class="m-tile-tag tag-hdr">HDR 10+</span>
+                                    <span class="m-tile-tag tag-codec">H.265</span>
+                                </div>
+                                <h4 class="m-select-tile__name">${origTitle}</h4>
+                                <p class="m-select-tile__desc">Тапните для запуска онлайн-просмотра</p>
+                            </div>
+                        </div>
+                    `;
+                    // Очищаем оригинальный подзаголовок, так как мы его упаковали внутрь плитки
+                    item.subtitle = ''; 
+                });
+
+                // Добавляем маркер-класс к окну, чтобы CSS сделал его горизонтальным скроллом
+                var originalOnRender = object.onRender;
+                object.onRender = function(html) {
+                    html.addClass('m-select-tiles-window');
+                    html.find('.select__items, .scroll__content, .scroll').addClass('m-select-tiles-list');
+                    if (originalOnRender) originalOnRender(html);
+                };
             }
-        }, 300);
+
+            // Вызываем оригинальный метод Лампы с нашими измененными плитками
+            originalSelectShow.call(window.Lampa.Select, object);
+        };
     }
 
-    function buildMobileTiles(items) {
-        items.each(function (index, element) {
-            var item = $(element);
-            var epNum = index + 1;
-            
-            // Вытаскиваем чистый текст названия без лишних пробелов
-            var rawTitle = item.text().replace(/\s+/g, ' ').trim();
-            var title = rawTitle || `${epNum} серия`;
-
-            // Сохраняем длительность, если плагин её выводит
-            var duration = item.find('.plugins__episode-duration, .duration').text() || '—';
-
-            // Генерируем плашки HDR и кодека (как на вашем фото)
-            var tagsHtml = `<span class="m-tag m-tag-hdr">HDR 10+</span><span class="m-tag m-tag-codec">H.265</span>`;
-            var defaultImg = 'https://lampa.mx';
-
-            // Создаем новую структуру карточки, которая отлично выглядит на вертикальном экране телефона
-            var newMobileTile = $(`
-                <div class="mobile-tile-card selector">
-                    <div class="mobile-tile-card__preview">
-                        <img src="${defaultImg}" class="mobile-tile-card__img" />
-                        <div class="mobile-tile-card__duration">${duration}</div>
-                    </div>
-                    <div class="mobile-tile-card__meta">
-                        <div class="mobile-tile-card__tags">${tagsHtml}</div>
-                        <h4 class="mobile-tile-card__title">${title}</h4>
-                        <p class="mobile-tile-card__desc">Тапните для выбора перевода и запуска серии.</p>
-                    </div>
-                </div>
-            `);
-
-            // Сохраняем все системные атрибуты Лампы, чтобы не сломать клики
-            newMobileTile.attr('class', item.attr('class') + ' mobile-tile-card');
-
-            // На телефонах hover:enter может не срабатывать, вешаем прямой клик/тач
-            newMobileTile.on('click touchend', function (e) {
-                e.preventDefault();
-                item.trigger('hover:enter');
-                item.click();
-            });
-
-            // Заменяем скучную вертикальную строку на красивую горизонтальную карточку
-            item.replaceWith(newMobileTile);
-        });
-
-        // Принудительно обновляем контроллер Лампы
-        if (window.Lampa.Controller) {
-            window.Lampa.Controller.refresh();
-        }
-    }
-
-    function injectMobileCSS() {
+    function injectMobileSelectCSS() {
         var css = `
-            /* Скролл-контейнер для мобильных устройств (разрешаем нативный свайп пальцем) */
-            .mobile-tiles-container {
+            /* Превращаем вертикальное мобильное меню Лампы в горизонтальную скролл-ленту */
+            .m-select-tiles-window .m-select-tiles-list {
                 display: flex !important;
                 flex-direction: row !important;
                 overflow-x: auto !important;
                 overflow-y: hidden !important;
-                gap: 14px !important;
-                padding: 10px 15px !important;
+                gap: 15px !important;
+                padding: 15px !important;
                 white-space: nowrap !important;
-                -webkit-overflow-scrolling: touch !important; /* Плавный скролл на iOS */
-                clear: both !important;
+                -webkit-overflow-scrolling: touch !important;
                 width: 100% !important;
                 box-sizing: border-box !important;
             }
-            .mobile-tiles-container::-webkit-scrollbar {
-                display: none !important; /* Прячем полосу прокрутки */
-            }
             
-            /* Стилизация карточки серии под мобильный экран */
-            .mobile-tile-card {
-                display: flex !important;
-                flex-direction: column !important;
-                width: 240px !important; /* Чуть уже, чем для ТВ, чтобы влезало на экран телефона */
-                height: 220px !important;
-                flex-shrink: 0 !important;
-                background: rgba(255, 255, 255, 0.05) !important;
-                border-radius: 10px !important;
-                overflow: hidden !important;
-                box-sizing: border-box !important;
+            /* Убираем стандартные длинные полосы строк Лампы */
+            .m-select-tiles-window .select__item, 
+            .m-select-tiles-window .scroll__content > div {
+                background: none !important;
+                border: AppColor !important;
                 padding: 0 !important;
                 margin: 0 !important;
-                border: 1px solid rgba(255, 255, 255, 0.1) !important;
+                display: block !important;
+                width: auto !important;
             }
             
-            .mobile-tile-card__preview {
+            /* Создаем саму карточку-плитку для телефона */
+            .m-select-tile {
+                display: flex !important;
+                flex-direction: column !important;
+                width: 250px !important;
+                height: 215px !important;
+                background: rgba(255, 255, 255, 0.05) !important;
+                border-radius: 12px !important;
+                overflow: hidden !important;
+                border: 1px solid rgba(255, 255, 255, 0.08) !important;
+                box-sizing: border-box !important;
+            }
+            
+            .m-select-tile__preview {
                 position: relative !important;
                 width: 100% !important;
-                height: 120px !important;
-                background: #101010 !important;
+                height: 125px !important;
+                background: #121212 !important;
             }
-            .mobile-tile-card__img {
+            
+            .m-select-tile__img {
                 width: 100% !important;
                 height: 100% !important;
                 object-fit: cover !important;
             }
-            .mobile-tile-card__duration {
+            
+            .m-select-tile__duration {
                 position: absolute !important;
                 bottom: 6px !important;
                 right: 6px !important;
                 background: rgba(0, 0, 0, 0.8) !important;
-                padding: 1px 5px !important;
-                border-radius: 3px !important;
+                padding: 2px 6px !important;
+                border-radius: 4px !important;
                 font-size: 10px !important;
                 color: #fff !important;
             }
             
-            .mobile-tile-card__meta {
-                padding: 8px 10px !important;
+            .m-select-tile__meta {
+                padding: 10px !important;
                 white-space: normal !important;
                 text-align: left !important;
             }
-            .mobile-tile-card__tags {
+            
+            .m-select-tile__tags {
                 display: flex !important;
                 gap: 5px !important;
-                margin-bottom: 4px !important;
+                margin-bottom: 5px !important;
             }
             
-            /* Мобильные теги HDR / Кодек */
-            .m-tag {
+            .m-tile-tag {
                 font-size: 9px !important;
                 font-weight: bold !important;
                 padding: 1px 4px !important;
                 border-radius: 2px !important;
             }
-            .m-tag-hdr { background: #ff9800 !important; color: #000 !important; }
-            .m-tag-codec { background: #2196f3 !important; color: #fff !important; }
+            .tag-hdr { background: #ff9800 !important; color: #000 !important; }
+            .tag-codec { background: #2196f3 !important; color: #fff !important; }
             
-            .mobile-tile-card__title {
+            .m-select-tile__name {
                 font-size: 13px !important;
                 font-weight: bold !important;
                 color: #fff !important;
-                margin: 0 0 3px 0 !important;
+                margin: 0 0 2px 0 !important;
                 overflow: hidden !important;
                 text-overflow: ellipsis !important;
                 white-space: nowrap !important;
             }
-            .mobile-tile-card__desc {
+            
+            .m-select-tile__desc {
                 font-size: 11px !important;
-                color: #8c8c8c !important;
+                color: #909090 !important;
                 margin: 0 !important;
                 display: -webkit-box !important;
                 -webkit-line-clamp: 2 !important;
                 -webkit-box-orient: vertical !important;
-                overflow: hidden;
+                overflow: hidden !important;
                 line-height: 1.3 !important;
             }
             
-            /* Стиль при тапе (визуальный отклик вместо фокуса пульта) */
-            .mobile-tile-card:active, .mobile-tile-card.focus {
+            /* Визуальный отклик при нажатии на плитку пальцем */
+            .m-select-tiles-window .focus .m-select-tile,
+            .m-select-tile:active {
                 background: rgba(255, 255, 255, 0.15) !important;
                 border-color: #ffffff !important;
             }
         `;
-        if (!$('head style:contains("mobile-tiles-container")').length) {
-            $('head').append('<style>' + css + '</style>');
-        }
+        $('head').append('<style>' + css + '</style>');
     }
 
-    if (window.Lampa) initMobileGpbxTiles();
-    else Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') initMobileGpbxTiles(); });
+    // Инициализация при полной готовности Лампы
+    if (window.Lampa) initMobileSelectOverride();
+    else Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') initMobileSelectOverride(); });
 })();
